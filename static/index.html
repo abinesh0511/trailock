@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trailock Login Defense</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a night-shift SOC console. Rotating login globe + live feed up top,
+   a playable risk engine in the middle, signals / flow / pricing below. Single dark theme by choice. */
+:root{
+  --bg:#06080e; --panel:#0c111d; --panel-2:#111829; --line:#1d2740;
+  --text:#e8ecf6; --muted:#8a94ad;
+  --amber:#ffb547; --ice:#6fd3ff; --danger:#ff5a76; --ok:#3ee0a4;
+  --display:"Syne", "Segoe UI", system-ui, sans-serif;
+  --body:"IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, Consolas, monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--body);line-height:1.6;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+   radial-gradient(900px 500px at 85% -10%, rgba(111,211,255,.10), transparent 60%),
+   radial-gradient(700px 400px at -10% 30%, rgba(255,181,71,.07), transparent 60%),
+   linear-gradient(var(--line) 1px, transparent 1px) 0 0/48px 48px,
+   linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/48px 48px;
+  opacity:.55; mask-image:linear-gradient(#000 0%, transparent 85%)}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:1180px;margin:0 auto;padding:0 clamp(16px,4vw,32px);position:relative;z-index:1}
+h1,h2,h3{font-family:var(--display);line-height:1.05;text-wrap:balance;letter-spacing:-.02em}
+.mono{font-family:var(--mono)}
+:focus-visible{outline:2px solid var(--amber);outline-offset:3px;border-radius:6px}
+
+/* nav */
+nav{display:flex;align-items:center;justify-content:space-between;padding:22px 0;gap:16px}
+.logo{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:800;font-size:1.3rem;letter-spacing:.02em}
+.logo svg{width:30px;height:30px}
+.links{display:flex;gap:28px;font-size:.92rem;color:var(--muted)}
+.links a:hover{color:var(--text)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:999px;font-weight:600;font-size:.92rem;border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer;transition:.2s;font-family:var(--body)}
+.btn:hover{border-color:var(--ice)}
+.btn.primary{background:var(--amber);color:#1a1205;border-color:var(--amber);box-shadow:0 0 0 0 rgba(255,181,71,.5)}
+.btn.primary:hover{box-shadow:0 0 28px rgba(255,181,71,.45)}
+
+/* hero */
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:40px;align-items:center;padding:40px 0 60px}
+.tag{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:.75rem;color:var(--ice);border:1px solid rgba(111,211,255,.3);padding:6px 12px;border-radius:999px;background:rgba(111,211,255,.06);letter-spacing:.06em;text-transform:uppercase}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok);animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.hero h1{font-size:clamp(2.6rem,6vw,4.6rem);margin:22px 0 20px}
+.hero h1 em{font-style:normal;background:linear-gradient(90deg,var(--amber),#ff7a59);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lead{color:var(--muted);font-size:1.12rem;max-width:52ch}
+.cta{display:flex;gap:12px;margin-top:30px;flex-wrap:wrap}
+.stats{display:flex;gap:36px;margin-top:40px;flex-wrap:wrap}
+.stats b{display:block;font-family:var(--display);font-size:1.8rem;font-variant-numeric:tabular-nums}
+.stats span{font-size:.82rem;color:var(--muted)}
+
+.console{position:relative;border:1px solid var(--line);border-radius:22px;background:linear-gradient(180deg,rgba(17,24,41,.85),rgba(12,17,29,.9));overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.console-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+.console-head .lights{display:flex;gap:6px}.lights i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+#globe{display:block;width:100%;height:300px}
+.feed{border-top:1px solid var(--line);font-family:var(--mono);font-size:.74rem;height:178px;overflow:hidden}
+.row{display:grid;grid-template-columns:62px 1fr 92px 58px;gap:8px;padding:8px 16px;border-bottom:1px solid rgba(29,39,64,.6);align-items:center;animation:slide .4s ease}
+@keyframes slide{from{background:rgba(255,181,71,.08)}}
+.row .who{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t{color:var(--muted)}
+.pill{justify-self:end;padding:2px 8px;border-radius:999px;font-size:.66rem;font-weight:600;letter-spacing:.04em}
+.pill.allow{background:rgba(62,224,164,.12);color:var(--ok)}
+.pill.mfa{background:rgba(255,181,71,.14);color:var(--amber)}
+.pill.block{background:rgba(255,90,118,.14);color:var(--danger)}
+.score{text-align:right;font-variant-numeric:tabular-nums}
+
+/* sections */
+section{padding:80px 0}
+.eyebrow{font-family:var(--mono);font-size:.75rem;color:var(--amber);letter-spacing:.14em;text-transform:uppercase}
+.sec-head{display:flex;justify-content:space-between;align-items:end;gap:30px;flex-wrap:wrap;margin-bottom:40px}
+.sec-head h2{font-size:clamp(2rem,4vw,3rem);margin-top:10px;max-width:18ch}
+.sec-head p{color:var(--muted);max-width:44ch}
+
+/* signals */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{position:relative;padding:26px;border:1px solid var(--line);border-radius:18px;background:var(--panel);transition:.25s;overflow:hidden}
+.card:hover{border-color:rgba(111,211,255,.45);transform:translateY(-3px)}
+.card::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--sev,var(--ice))}
+.card .k{font-family:var(--mono);font-size:.7rem;color:var(--muted);display:flex;justify-content:space-between}
+.card h3{font-size:1.25rem;margin:14px 0 8px}
+.card p{color:var(--muted);font-size:.93rem}
+.card .metric{margin-top:16px;font-family:var(--mono);font-size:.78rem;color:var(--text);background:var(--panel-2);padding:8px 10px;border-radius:8px;border:1px solid var(--line)}
+
+/* risk engine */
+.engine{display:grid;grid-template-columns:1.1fr .9fr;gap:20px}
+.panel{border:1px solid var(--line);border-radius:22px;background:var(--panel);padding:28px}
+.panel h3{font-size:1.15rem;margin-bottom:6px}
+.panel .sub{color:var(--muted);font-size:.88rem;margin-bottom:22px}
+.toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-bottom:1px dashed var(--line);cursor:pointer}
+.toggle:last-of-type{border-bottom:0}
+.toggle .lbl b{display:block;font-weight:600;font-size:.95rem}
+.toggle .lbl span{font-size:.8rem;color:var(--muted)}
+.sw{position:relative;width:44px;height:24px;flex:none}
+.sw input{position:absolute;opacity:0;inset:0;cursor:pointer}
+.sw i{position:absolute;inset:0;border-radius:999px;background:var(--line);transition:.2s}
+.sw i::after{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;border-radius:50%;background:var(--muted);transition:.2s}
+.sw input:checked+i{background:rgba(255,181,71,.25)}
+.sw input:checked+i::after{left:23px;background:var(--amber)}
+.sw input:focus-visible+i{outline:2px solid var(--amber);outline-offset:2px}
+.range{padding:16px 0 4px}
+.range label{display:flex;justify-content:space-between;font-size:.9rem;font-weight:600}
+.range label span{font-family:var(--mono);color:var(--amber)}
+input[type=range]{width:100%;margin-top:10px;accent-color:var(--amber)}
+.verdict{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.gauge{position:relative;width:230px;height:230px}
+.gauge svg{width:100%;height:100%;transform:rotate(-90deg)}
+.gauge .num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gauge .num b{font-family:var(--display);font-size:3.6rem;font-variant-numeric:tabular-nums;line-height:1}
+.gauge .num span{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-top:6px;letter-spacing:.1em}
+.decision{margin-top:18px;font-family:var(--display);font-size:1.5rem}
+.why{margin-top:16px;width:100%;text-align:left;font-family:var(--mono);font-size:.76rem;color:var(--muted);background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:14px;min-height:96px}
+.why div{display:flex;justify-content:space-between;padding:2px 0}
+.why div b{color:var(--text);font-weight:400}
+
+/* flow */
+.flow{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;counter-reset:s}
+.step{padding:26px;border-radius:18px;border:1px solid var(--line);background:linear-gradient(180deg,var(--panel-2),var(--panel))}
+.step .n{font-family:var(--mono);font-size:.75rem;color:var(--ice)}
+.step h3{font-size:1.2rem;margin:10px 0 8px}
+.step p{color:var(--muted);font-size:.92rem}
+pre{margin-top:22px;padding:22px;border-radius:18px;border:1px solid var(--line);background:#080b13;font-family:var(--mono);font-size:.82rem;line-height:1.7;overflow-x:auto;color:#c9d2e6}
+pre .c{color:#5c6888}.s{color:var(--amber)}.k2{color:var(--ice)}.g{color:var(--ok)}
+
+/* pricing */
+.prices{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.price{padding:30px;border:1px solid var(--line);border-radius:22px;background:var(--panel);display:flex;flex-direction:column;gap:14px}
+.price.hot{border-color:var(--amber);background:linear-gradient(180deg,rgba(255,181,71,.08),var(--panel) 60%)}
+.price h3{font-size:1.1rem}
+.price .amt{font-family:var(--display);font-size:2.6rem;font-variant-numeric:tabular-nums}
+.price .amt small{font-size:.9rem;color:var(--muted);font-family:var(--body);font-weight:400}
+.price ul{list-style:none;display:grid;gap:8px;font-size:.92rem;color:var(--muted);flex:1}
+.price li::before{content:"› ";color:var(--amber);font-family:var(--mono)}
+.price .btn{justify-content:center}
+
+/* final cta */
+.final{margin:20px 0 80px;padding:56px clamp(20px,5vw,60px);border-radius:28px;border:1px solid var(--line);background:radial-gradient(600px 300px at 80% 0%,rgba(255,181,71,.16),transparent 70%),var(--panel);display:flex;justify-content:space-between;align-items:center;gap:30px;flex-wrap:wrap}
+.final h2{font-size:clamp(1.8rem,4vw,2.8rem);max-width:20ch}
+form.demo{display:flex;gap:10px;flex-wrap:wrap}
+form.demo input{padding:12px 18px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-family:var(--body);min-width:240px;font-size:.92rem}
+.note{font-size:.82rem;color:var(--ok);margin-top:10px;min-height:1.2em;font-family:var(--mono)}
+footer{border-top:1px solid var(--line);padding:30px 0;color:var(--muted);font-size:.85rem;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+
+@media (max-width:920px){
+  .hero,.engine{grid-template-columns:1fr}
+  .grid,.flow,.prices{grid-template-columns:1fr 1fr}
+  .links{display:none}
+}
+@media (max-width:600px){
+  .grid,.flow,.prices{grid-template-columns:1fr}
+  .row{grid-template-columns:52px 1fr 54px}
+  .row .t{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="logo" href="#top" aria-label="Trailock home">
+      <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M16 2 28 7v8c0 7.5-5.2 12.8-12 15C9.2 27.8 4 22.5 4 15V7l12-5Z" stroke="#ffb547" stroke-width="2"/><circle cx="16" cy="15" r="4.5" stroke="#6fd3ff" stroke-width="2"/><path d="M16 19.5V24" stroke="#6fd3ff" stroke-width="2" stroke-linecap="round"/></svg>
+      TRAILOCK
+    </a>
+    <div class="links">
+      <a href="#signals">Signals</a><a href="#engine">Risk engine</a><a href="#how">Integrate</a><a href="#pricing">Pricing</a>
+    </div>
+    <div style="display:flex;gap:10px"><a class="btn" href="/login">Log in</a><a class="btn primary" href="/register">Get started</a></div>
+  </nav>
+
+  <header class="hero" id="top">
+    <div>
+      <span class="tag"><i class="dot"></i>Live login threat detection</span>
+      <h1>Every login leaves a trail. <em>Trailock reads it.</em></h1>
+      <p class="lead">Trailock scores each sign-in in under 40 ms using location, device, network and behaviour signals. Real users get in without friction. Account takeovers get stopped at the door.</p>
+      <div class="cta">
+        <a class="btn primary" href="#engine">Try the risk engine →</a>
+        <a class="btn" href="/login">Open live login →</a>
+      </div>
+      <div class="stats">
+        <div><b id="c1">0</b><span>logins scored today (demo)</span></div>
+        <div><b>&lt;40ms</b><span>median decision time</span></div>
+        <div><b>99.2%</b><span>ATO catch rate target</span></div>
+      </div>
+    </div>
+
+    <div class="console" aria-label="Simulated live login monitor">
+      <div class="console-head"><div class="lights"><i></i><i></i><i></i></div><span>trailock://soc/live · simulated</span><span id="clock">--:--:--</span></div>
+      <canvas id="globe" aria-hidden="true"></canvas>
+      <div class="feed" id="feed"></div>
+    </div>
+  </header>
+</div>
+
+<section id="signals">
+  <div class="wrap">
+    <div class="sec-head">
+      <div><span class="eyebrow">Detection signals</span><h2>Six ways an attacker gives themselves away</h2></div>
+      <p>Each signal adds weight to a 0 to 100 risk score. No single rule decides; the combination does.</p>
+    </div>
+    <div class="grid">
+      <article class="card" style="--sev:var(--danger)"><div class="k"><span>SIG-01</span><span>geo</span></div><h3>Impossible travel</h3><p>Chennai at 09:02, Frankfurt at 09:40. We compute the travel speed between consecutive logins and flag anything a plane can't do.</p><div class="metric">velocity &gt; 900 km/h → +35</div></article>
+      <article class="card" style="--sev:var(--amber)"><div class="k"><span>SIG-02</span><span>device</span></div><h3>Unknown device fingerprint</h3><p>Browser, OS, screen, fonts and WebGL hashed into a stable fingerprint. A brand new one on a long-lived account raises the score.</p><div class="metric">first_seen = now → +20</div></article>
+      <article class="card" style="--sev:var(--danger)"><div class="k"><span>SIG-03</span><span>volume</span></div><h3>Credential stuffing</h3><p>Bursts of failed passwords across many usernames from one IP range. Trailock rate-limits the source before a valid combo lands.</p><div class="metric">fails/5min ≥ 8 → +4 each</div></article>
+      <article class="card" style="--sev:var(--amber)"><div class="k"><span>SIG-04</span><span>network</span></div><h3>Risky network &amp; ASN</h3><p>Tor exit nodes, open proxies, VPN ranges and hosting ASNs are scored against a reputation feed refreshed hourly.</p><div class="metric">asn_type = hosting → +18</div></article>
+      <article class="card" style="--sev:var(--ice)"><div class="k"><span>SIG-05</span><span>behaviour</span></div><h3>Off-pattern hours</h3><p>Each user builds a baseline of when they normally sign in. A 3 AM login from someone who works 9 to 6 stands out.</p><div class="metric">z-score &gt; 2.5 → +12</div></article>
+      <article class="card" style="--sev:var(--danger)"><div class="k"><span>SIG-06</span><span>mfa</span></div><h3>MFA fatigue</h3><p>Repeated push prompts in a short window usually mean someone is spamming approvals, hoping the user taps yes to make it stop.</p><div class="metric">pushes/10min ≥ 4 → +25</div></article>
+    </div>
+  </div>
+</section>
+
+<section id="engine">
+  <div class="wrap">
+    <div class="sec-head">
+      <div><span class="eyebrow">Interactive</span><h2>Play with the risk engine</h2></div>
+      <p>Switch signals on and off to see how Trailock would score this login for user <span class="mono">priya@acme.io</span>.</p>
+    </div>
+    <div class="engine">
+      <div class="panel">
+        <h3>Login context</h3>
+        <p class="sub">Example sign-in attempt · 18 Nov, 03:14 local time</p>
+        <label class="toggle" for="s-travel"><span class="lbl"><b>Impossible travel</b><span>Last login Chennai 40 min ago, now Frankfurt</span></span><span class="sw"><input type="checkbox" id="s-travel" data-w="35" data-n="impossible_travel"><i></i></span></label>
+        <label class="toggle" for="s-device"><span class="lbl"><b>New device</b><span>Firefox on Linux, never seen for this account</span></span><span class="sw"><input type="checkbox" id="s-device" data-w="20" data-n="new_device" checked><i></i></span></label>
+        <label class="toggle" for="s-tor"><span class="lbl"><b>Tor / hosting network</b><span>IP belongs to a known VPS provider ASN</span></span><span class="sw"><input type="checkbox" id="s-tor" data-w="18" data-n="risky_asn"><i></i></span></label>
+        <label class="toggle" for="s-hour"><span class="lbl"><b>Unusual hour</b><span>User normally signs in 09:00 to 19:00</span></span><span class="sw"><input type="checkbox" id="s-hour" data-w="12" data-n="off_hours" checked><i></i></span></label>
+        <label class="toggle" for="s-mfa"><span class="lbl"><b>MFA push spam</b><span>5 push prompts sent in the last 8 minutes</span></span><span class="sw"><input type="checkbox" id="s-mfa" data-w="25" data-n="mfa_fatigue"><i></i></span></label>
+        <div class="range">
+          <label for="fails">Failed password attempts <span id="failv">2</span></label>
+          <input type="range" id="fails" min="0" max="10" value="2">
+        </div>
+      </div>
+      <div class="panel verdict" aria-live="polite">
+        <div class="gauge">
+          <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="none" stroke="#1d2740" stroke-width="10"/><circle id="arc" cx="60" cy="60" r="52" fill="none" stroke="#ffb547" stroke-width="10" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" style="transition:stroke-dashoffset .5s,stroke .3s"/></svg>
+          <div class="num"><b id="score">0</b><span>RISK SCORE</span></div>
+        </div>
+        <div class="decision" id="decision">Allow</div>
+        <div class="why" id="why"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head">
+      <div><span class="eyebrow">Integrate in an afternoon</span><h2>Three steps from install to protected</h2></div>
+      <p>Works alongside Auth0, Cognito, Keycloak or your own login form.</p>
+    </div>
+    <div class="flow">
+      <div class="step"><span class="n">01 / collect</span><h3>Drop in the SDK</h3><p>A 9 KB script gathers device and session signals on your login page. No cookies, no PII stored in raw form.</p></div>
+      <div class="step"><span class="n">02 / score</span><h3>Ask before you let in</h3><p>Your backend sends the login event. Trailock replies with a score, the reasons, and a recommended action.</p></div>
+      <div class="step"><span class="n">03 / respond</span><h3>Allow, challenge or block</h3><p>Low risk passes silently, medium triggers step-up MFA, high gets blocked and posted to Slack or your SIEM.</p></div>
+    </div>
+<pre><span class="c">// server.js — score a login before issuing a session</span>
+<span class="k2">const</span> verdict = <span class="k2">await</span> trailock.assess({
+  user: <span class="s">"priya@acme.io"</span>,
+  ip: req.ip,
+  fingerprint: req.body.trailockToken,
+  outcome: <span class="s">"password_ok"</span>
+});
+
+<span class="c">// → { score: 82, action: "block", reasons: ["impossible_travel", "risky_asn"] }</span>
+<span class="k2">if</span> (verdict.action === <span class="s">"block"</span>)     <span class="k2">return</span> res.status(<span class="g">403</span>).end();
+<span class="k2">if</span> (verdict.action === <span class="s">"challenge"</span>) <span class="k2">return</span> requireMfa(res);
+createSession(res);</pre>
+  </div>
+</section>
+
+<section id="pricing">
+  <div class="wrap">
+    <div class="sec-head">
+      <div><span class="eyebrow">Pricing</span><h2>Priced by monthly active users</h2></div>
+      <p>Every plan includes all six detection signals. Upgrade for retention, integrations and support.</p>
+    </div>
+    <div class="prices">
+      <div class="price"><h3>Starter</h3><div class="amt">$0<small> / up to 1k MAU</small></div><ul><li>All detection signals</li><li>7-day login history</li><li>Email alerts</li></ul><a class="btn" href="/register">Start free</a></div>
+      <div class="price hot"><h3>Growth</h3><div class="amt">$149<small> / month · 25k MAU</small></div><ul><li>90-day history &amp; audit log</li><li>Slack, Teams and webhook alerts</li><li>Custom risk thresholds</li><li>Step-up MFA flows</li></ul><a class="btn primary" href="/register">Start 14-day trial</a></div>
+      <div class="price"><h3>Enterprise</h3><div class="amt">Custom</div><ul><li>Unlimited MAU</li><li>SIEM export (Splunk, Sentinel)</li><li>Self-hosted AMI option</li><li>SSO, SLA and dedicated support</li></ul><a class="btn" href="/register">Talk to sales</a></div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+  <div class="final" id="demo">
+    <div><span class="eyebrow">Get started</span><h2 style="margin-top:10px">Find out who's really logging in to your app.</h2></div>
+    <div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn primary" href="/register">Create free account</a><a class="btn" href="/dashboard">Open dashboard</a></div>
+    </div>
+  </div>
+  <footer><span>© 2026 Trailock Security</span><span class="mono">SOC 2 Type II · GDPR · ISO 27001 (planned)</span></footer>
+</div>
+
+<script>
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------- globe ---------- */
+  const cv = document.getElementById('globe'), ctx = cv.getContext('2d');
+  let W, H, R, dpr = Math.min(devicePixelRatio || 1, 2);
+  const pts = [], N = 900;
+  for (let i = 0; i < N; i++) {           // fibonacci sphere
+    const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(1 - y * y), th = Math.PI * (3 - Math.sqrt(5)) * i;
+    pts.push([Math.cos(th) * r, y, Math.sin(th) * r]);
+  }
+  const pings = [];
+  function size() {
+    const b = cv.getBoundingClientRect(); W = b.width; H = b.height;
+    cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    R = Math.min(W, H) * 0.42;
+  }
+  size(); addEventListener('resize', size);
+  let rot = 0;
+  function proj(p) {
+    const c = Math.cos(rot), s = Math.sin(rot), tilt = 0.35;
+    let x = p[0] * c - p[2] * s, z = p[0] * s + p[2] * c, y = p[1];
+    const y2 = y * Math.cos(tilt) - z * Math.sin(tilt), z2 = y * Math.sin(tilt) + z * Math.cos(tilt);
+    return [W / 2 + x * R, H / 2 + y2 * R, z2];
+  }
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const g = ctx.createRadialGradient(W/2, H/2, R*0.2, W/2, H/2, R*1.25);
+    g.addColorStop(0, 'rgba(111,211,255,.08)'); g.addColorStop(1, 'rgba(111,211,255,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(W/2, H/2, R*1.25, 0, 7); ctx.fill();
+    for (const p of pts) {
+      const [x, y, z] = proj(p); if (z < -0.05) continue;
+      ctx.fillStyle = `rgba(138,148,173,${0.15 + z * 0.55})`;
+      ctx.fillRect(x, y, 1.6, 1.6);
+    }
+    for (let i = pings.length - 1; i >= 0; i--) {
+      const k = pings[i]; k.t += 0.012;
+      const a = proj(k.a), b = proj(k.b);
+      if (k.t > 1.6) { pings.splice(i, 1); continue; }
+      if (a[2] < 0 && b[2] < 0) continue;
+      const col = k.c, prog = Math.min(k.t, 1);
+      const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2 - 60;
+      ctx.strokeStyle = col; ctx.globalAlpha = Math.max(0, 1 - Math.max(0, k.t - 1) * 1.6); ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]);
+      for (let s = 0; s <= prog; s += 0.04) {
+        const x = (1-s)*(1-s)*a[0] + 2*(1-s)*s*mx + s*s*b[0], y = (1-s)*(1-s)*a[1] + 2*(1-s)*s*my + s*s*b[1];
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(b[0], b[1], 2.5 + (k.t > 1 ? (k.t - 1) * 14 : 0), 0, 7);
+      ctx.globalAlpha *= k.t > 1 ? 0.5 : 1; ctx.fill(); ctx.globalAlpha = 1;
+    }
+    if (!reduce) rot += 0.0025;
+    requestAnimationFrame(draw);
+  }
+  draw();
+
+  /* ---------- live feed (simulated) ---------- */
+  const users = ['arun.k','priya','meera.s','dev.ops','j.fernandes','nisha','r.iyer','admin','svc-backup','karthik','li.wei','ops-root'];
+  const places = ['Chennai IN','Bengaluru IN','Frankfurt DE','Singapore SG','Ashburn US','São Paulo BR','Lagos NG','Moscow RU','Dublin IE','Tokyo JP'];
+  const feed = document.getElementById('feed');
+  let count = 18432;
+  const c1 = document.getElementById('c1');
+  function push() {
+    const sc = Math.random() < 0.65 ? Math.floor(Math.random() * 30) : Math.random() < 0.6 ? 40 + Math.floor(Math.random() * 30) : 72 + Math.floor(Math.random() * 27);
+    const act = sc < 35 ? 'allow' : sc < 70 ? 'mfa' : 'block';
+    const now = new Date();
+    const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = `<span class="t">${now.toTimeString().slice(0,8)}</span><span class="who">${users[Math.random()*users.length|0]} · ${places[Math.random()*places.length|0]}</span><span class="score">risk ${String(sc).padStart(2,'0')}</span><span class="pill ${act}">${act === 'mfa' ? 'MFA' : act.toUpperCase()}</span>`;
+    feed.prepend(row); while (feed.children.length > 8) feed.lastChild.remove();
+    const rp = () => pts[Math.random() * N | 0];
+    pings.push({ a: rp(), b: rp(), t: 0, c: act === 'allow' ? '#3ee0a4' : act === 'mfa' ? '#ffb547' : '#ff5a76' });
+    count += 1 + (Math.random() * 7 | 0); c1.textContent = count.toLocaleString('en-US');
+  }
+  for (let i = 0; i < 6; i++) push();
+  setInterval(push, 1400);
+  const clock = document.getElementById('clock');
+  setInterval(() => clock.textContent = new Date().toTimeString().slice(0, 8) + ' local', 1000);
+
+  /* ---------- risk engine ---------- */
+  const boxes = [...document.querySelectorAll('.engine input[type=checkbox]')];
+  const fails = document.getElementById('fails'), failv = document.getElementById('failv');
+  const arc = document.getElementById('arc'), scoreEl = document.getElementById('score'), dec = document.getElementById('decision'), why = document.getElementById('why');
+  function score() {
+    let s = 0; const reasons = [];
+    boxes.forEach(b => { if (b.checked) { s += +b.dataset.w; reasons.push([b.dataset.n, +b.dataset.w]); } });
+    const f = +fails.value; failv.textContent = f;
+    if (f > 0) { const w = f * 4; s += w; reasons.push(['failed_attempts×' + f, w]); }
+    s = Math.min(100, s);
+    const col = s < 35 ? '#3ee0a4' : s < 70 ? '#ffb547' : '#ff5a76';
+    arc.style.strokeDashoffset = 326.7 * (1 - s / 100); arc.style.stroke = col;
+    scoreEl.textContent = s; scoreEl.style.color = col;
+    dec.textContent = s < 35 ? 'Allow silently' : s < 70 ? 'Step-up MFA' : 'Block & alert SOC'; dec.style.color = col;
+    why.innerHTML = reasons.length
+      ? reasons.map(([n, w]) => `<div><b>${n}</b><span>+${w}</span></div>`).join('') + `<div style="border-top:1px solid #1d2740;margin-top:6px;padding-top:6px"><b>total (capped at 100)</b><span>${s}</span></div>`
+      : '<div><b>no risk signals</b><span>+0</span></div>';
+  }
+  boxes.forEach(b => b.addEventListener('change', score)); fails.addEventListener('input', score); score();
+
+})();
+</script>
+</body>
+</html>

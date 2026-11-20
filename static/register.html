@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create account · Trailock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="top"><a class="logo" href="/" data-logo>TRAILOCK</a><a class="btn small" href="/login">Log in</a></nav>
+  <div class="auth">
+    <div class="card">
+      <h1>Create your account</h1>
+      <p class="sub">The first account created becomes the admin and can see every login on this server.</p>
+      <form id="f">
+        <div class="field"><label for="name">Full name</label><input id="name" required autocomplete="name"></div>
+        <div class="field"><label for="email">Email</label><input id="email" type="email" required autocomplete="email"></div>
+        <div class="field"><label for="pw">Password</label><input id="pw" type="password" minlength="8" required autocomplete="new-password"><small>At least 8 characters</small></div>
+        <button class="btn primary" id="go" type="submit">Create account</button>
+      </form>
+      <div class="msg" id="msg"></div>
+      <p class="alt">Already have an account? <a href="/login">Log in</a></p>
+    </div>
+    <div class="card result">
+      <h2>What happens after you sign up</h2>
+      <p class="sub">Every login to this account is scored from 0 to 100.</p>
+      <div class="reasons">
+        <div class="reason"><span>0 to 34: login goes through silently</span><b class="pill allow">allow</b></div>
+        <div class="reason"><span>35 to 69: a 6-digit code is required</span><b class="pill challenge">challenge</b></div>
+        <div class="reason"><span>70 to 100: login is blocked and an alert is raised</span><b class="pill block">block</b></div>
+        <div class="reason"><span>10 wrong passwords from one IP in 15 min</span><b class="pill deny">IP blocked 30 min</b></div>
+      </div>
+      <p class="sub" style="margin-top:18px">Your first successful login becomes the baseline. New IPs, new devices, new countries and impossible travel are measured against it.</p>
+    </div>
+  </div>
+</div>
+<script src="/static/common.js"></script>
+<script>
+const f = document.getElementById('f'), msg = document.getElementById('msg'), go = document.getElementById('go');
+f.addEventListener('submit', async e => {
+  e.preventDefault(); go.disabled = true;
+  try {
+    const r = await api('/api/register', { method: 'POST', body: {
+      name: document.getElementById('name').value, email: document.getElementById('email').value,
+      password: document.getElementById('pw').value } });
+    msg.className = 'msg show ok';
+    msg.textContent = (r.admin ? 'Admin account created. ' : 'Account created. ') + 'Taking you to log in…';
+    setTimeout(() => location.href = '/login?email=' + encodeURIComponent(document.getElementById('email').value), 1200);
+  } catch (err) { msg.className = 'msg show bad'; msg.textContent = err.message; go.disabled = false; }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in · Trailock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="top"><a class="logo" href="/" data-logo>TRAILOCK</a><a class="btn small" href="/register">Create account</a></nav>
+  <div class="auth">
+    <div class="card">
+      <div id="loginBox">
+        <h1>Log in</h1>
+        <p class="sub">Your IP address, location and device are checked on every attempt.</p>
+        <form id="f">
+          <div class="field"><label for="email">Email</label><input id="email" type="email" required autocomplete="email"></div>
+          <div class="field"><label for="pw">Password</label><input id="pw" type="password" required autocomplete="current-password"></div>
+          <details class="sim" id="sim" hidden>
+            <summary>Test mode: log in as another IP</summary>
+            <div class="field" style="margin-top:10px"><label for="simip">Pretend my IP is</label><input id="simip" class="mono" placeholder="leave empty to use your real IP"></div>
+            <div class="chips" id="chips"></div>
+            <label style="display:flex;gap:8px;align-items:center;font-size:.82rem;margin-top:12px"><input type="checkbox" id="newdev"> Pretend this is a new device</label>
+            <small style="display:block;color:var(--muted);font-size:.75rem;margin-top:8px">Only for local testing. Set TRAILOCK_SIMULATE=0 on a real server.</small>
+          </details>
+          <button class="btn primary" id="go" type="submit">Log in</button>
+        </form>
+      </div>
+      <div id="otpBox" hidden>
+        <h1>Verify it's you</h1>
+        <p class="sub" id="otpText">Enter the 6-digit code.</p>
+        <form id="otpf">
+          <div class="field"><label for="code">Verification code</label><input id="code" class="mono" inputmode="numeric" maxlength="6" required autocomplete="one-time-code" style="font-size:1.4rem;letter-spacing:.4em;text-align:center"></div>
+          <button class="btn primary" type="submit">Verify</button>
+        </form>
+        <p class="alt"><a href="/login">Start over</a></p>
+      </div>
+      <div class="msg" id="msg"></div>
+      <p class="alt">New here? <a href="/register">Create an account</a></p>
+    </div>
+
+    <div class="card result" aria-live="polite">
+      <h2 id="rTitle">Your connection</h2>
+      <p class="sub" id="rSub">This is what Trailock sees before you even log in.</p>
+      <div class="gauge-row" id="gauge" hidden>
+        <div class="big" id="score">0</div>
+        <div><span class="pill" id="action">-</span><div class="bar"><i id="bar"></i></div></div>
+      </div>
+      <dl class="kv" id="kv"></dl>
+      <div class="reasons" id="reasons"></div>
+    </div>
+  </div>
+</div>
+<script src="/static/common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+if (params.get('email')) $('email').value = params.get('email');
+
+const TEST_IPS = [
+  ['India', '117.192.10.5'], ['India', '49.207.48.10'], ['UK', '81.2.69.142'],
+  ['Germany (hosting)', '85.214.132.117'], ['USA (Google DC)', '8.8.8.8'], ['Brazil', '200.160.2.3'], ['Japan', '133.11.0.1']
+];
+let challengeId = null;
+
+function showConn(d) {
+  $('kv').innerHTML = `<dt>IP address</dt><dd>${esc(d.ip)}</dd><dt>Location</dt><dd>${esc(place(d))}</dd>
+    <dt>ISP</dt><dd>${esc(d.isp || (d.private ? 'Private / localhost' : 'Unknown'))}</dd>
+    <dt>Network</dt><dd>${d.risky_network ? '<span style="color:var(--danger)">Proxy / VPN / datacenter</span>' : 'Residential / normal'}</dd>
+    <dt>Device ID</dt><dd>${esc(deviceId())}</dd>`;
+}
+
+function showResult(r) {
+  const labels = { ok: 'Allowed', challenge: 'Verification needed', blocked: 'Blocked', invalid: 'Failed' };
+  const act = { ok: 'allow', challenge: 'challenge', blocked: 'block', invalid: 'deny' }[r.status];
+  $('rTitle').textContent = 'Risk analysis: ' + labels[r.status];
+  $('rSub').textContent = 'How Trailock scored this attempt.';
+  $('gauge').hidden = false;
+  $('score').textContent = r.score; $('score').style.color = riskColor(r.score);
+  $('action').className = 'pill ' + act; $('action').textContent = act;
+  $('bar').style.width = r.score + '%'; $('bar').style.background = riskColor(r.score);
+  showConn({ ip: r.ip, ...r.geo });
+  $('reasons').innerHTML = r.reasons.length
+    ? r.reasons.map(x => `<div class="reason"><span>${esc(x.detail)}</span><b>+${x.points}</b></div>`).join('')
+    : '<p class="empty">No risk signals. Looks like a normal login.</p>';
+}
+
+function say(cls, text) { $('msg').className = 'msg show ' + cls; $('msg').textContent = text; }
+
+(async () => {
+  try {
+    const cfg = await api('/api/config');
+    if (cfg.simulate) {
+      $('sim').hidden = false;
+      $('chips').innerHTML = TEST_IPS.map(([n, ip]) => `<button type="button" class="chip" data-ip="${ip}">${n} · ${ip}</button>`).join('');
+      $('chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) $('simip').value = b.dataset.ip; });
+    }
+    showConn(await api('/api/my-ip'));
+  } catch (e) {}
+})();
+
+$('f').addEventListener('submit', async e => {
+  e.preventDefault(); $('go').disabled = true; $('msg').className = 'msg';
+  const headers = {};
+  if (!$('sim').hidden && $('simip').value.trim()) headers['X-Sim-IP'] = $('simip').value.trim();
+  const dev = $('newdev').checked ? cyrb53(Math.random() + '') : deviceId();
+  try {
+    const r = await api('/api/login', { method: 'POST', headers, body: { email: $('email').value, password: $('pw').value, device_id: dev } });
+    showResult(r);
+    if (r.status === 'ok') { say('ok', r.message + ' Opening dashboard…'); setTimeout(() => location.href = '/dashboard', 1500); }
+    else if (r.status === 'challenge') {
+      challengeId = r.challenge_id; $('loginBox').hidden = true; $('otpBox').hidden = false;
+      $('otpText').textContent = r.message; say('warn', 'Check the terminal window where Trailock is running for your code.'); $('code').focus();
+    }
+    else if (r.status === 'blocked') say('bad', r.message);
+    else say('bad', r.message);
+  } catch (err) { say('bad', err.message); }
+  $('go').disabled = false;
+});
+
+$('otpf').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    const r = await api('/api/verify', { method: 'POST', body: { challenge_id: challengeId, code: $('code').value } });
+    say('ok', r.message + ' Opening dashboard…'); setTimeout(() => location.href = '/dashboard', 1200);
+  } catch (err) { say('bad', err.message); }
+});
+</script>
+</body>
+</html>
